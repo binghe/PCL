@@ -1,0 +1,2157 @@
+The new-kcl-wrapper modifications make the storage of standard-objects
+and structure objects much more similar than before.  These changes should 
+greatly speed up WRAPPER-OF for structure objects and should speed up
+WRAPPER-OF for standard-instances also (but not funcallable instances).
+
+Look first at the defstructs defined here (scan this file for "(defstruct (").
+Then look at cache.lisp, at the "#+structure-wrapper" for the new definition of
+the wrapper structure.  Finally, look in low.lisp, at the 
+"#+new-structure-wrapper" for the definition of %allocate-instance--class.
+
+You need to have akcl-1-615 to use this file.
+
+This file contains new versions of the files V/c/structure.c and 
+V/lsp/defstruct.lsp, as well as small changes to the files c/gbc.c, c/sgbc.c, 
+cmpnew/cmpinit.lsp, lsp/cmpinit.lsp, and lsp/describe.lsp.
+
+-- The gbc changes allow the garbage collector to work correctly even when
+structures which define other structures (ones which can be the value of 
+STRUCTURE-DEF) are not allocated in static storage. 
+
+
+c/gbc.c
+*** c/gbc.c       Tue Jun 30 04:11:00 1992
+--- ../akcl-1-615/c/gbc.c Tue Jun 30 02:48:04 1992
+***************
+*** 427,453 ****
+                          break;
+                  goto COPY_STRING;
+  
+          case t_structure:
+                  mark_object(x->str.str_def);
+                  p = x->str.str_self;
+                  if (p == NULL)
+!                         break;
+!                 {object def=x->str.str_def;
+!                  unsigned char * s_type = &SLOT_TYPE(def,0);
+!                  unsigned short *s_pos= & SLOT_POS(def,0);
+!                  for (i = 0, j = S_DATA(def)->length;  i < j;  i++)
+                     if (s_type[i]==0) mark_object(STREF(object,x,s_pos[i]));
+                   if ((int)what_to_collect >= (int)t_contiguous) {
+                       if (inheap(x->str.str_self)) {
+                         if (what_to_collect == t_contiguous)
+                           mark_contblock((char *)p,
+!                                         S_DATA(def)->size);
+  
+                       } else
+!                        x->str.str_self = (object *)
+!                          copy_relblock((char *)p, S_DATA(def)->size);
+                     }}
+                  break;
+  
+          case t_stream:
+                  switch (x->sm.sm_mode) {
+--- 427,461 ----
+                          break;
+                  goto COPY_STRING;
+  
+          case t_structure:
++                 x->d.m = 2; 
+                  mark_object(x->str.str_def);
+                  p = x->str.str_self;
+                  if (p == NULL)
+!                         {x->d.m = TRUE; break;}
+!                 {object def=x->str.str_def;
+!                  struct s_data *sdef=S_DATA(def);
+!                  unsigned char *s_type;
+!                  unsigned short *s_pos;
+!                  if((int)what_to_collect >= (int)t_contiguous &&
+!                     !inheap(sdef) && def->d.m==TRUE)
+!                    sdef=(struct s_data *)(((char *)sdef)+(rb_start1-rb_start));
+!                  s_type = sdef->raw->ust.ust_self;
+!                  s_pos = &USHORT(sdef->slot_position,0);
+!                  for (i = 0, j = sdef->length;  i < j;  i++)
+                     if (s_type[i]==0) mark_object(STREF(object,x,s_pos[i]));
+                   if ((int)what_to_collect >= (int)t_contiguous) {
+                       if (inheap(x->str.str_self)) {
+                         if (what_to_collect == t_contiguous)
+                           mark_contblock((char *)p,
+!                                         sdef->size);
+  
+                       } else
+!                         x->str.str_self = (object *)
+!                          copy_relblock((char *)p, sdef->size);
+                     }}
++                 x->d.m = TRUE; 
+                  break;
+  
+          case t_stream:
+                  switch (x->sm.sm_mode) {
+*** c/sgbc.c      Mon Jun 15 21:16:01 1992
+--- akcl-1-615/c/sgbc.c   Wed Jul  1 18:37:24 1992
+***************
+*** 355,386 ****
+                  if (cp == NULL)
+                          break;
+                  goto COPY_STRING;
+  
+          case t_structure:
+                  sgc_mark_object(x->str.str_def);
+                  p = x->str.str_self;
+                  if (p == NULL)
+!                         break;
+!                 {object def=x->str.str_def;
+!                  unsigned char * s_type = &SLOT_TYPE(def,0);
+!                  unsigned short *s_pos= & SLOT_POS(def,0);
+!                  for (i = 0, j = S_DATA(def)->length;  i < j;  i++)
+                     if (s_type[i]==0 &&
+                         ON_WRITABLE_PAGE(& STREF(object,x,s_pos[i]))
+                         )
+                       sgc_mark_object(STREF(object,x,s_pos[i]));
+                   if ((int)what_to_collect >= (int)t_contiguous) {
+                       if (inheap(x->str.str_self)) {
+                         if (what_to_collect == t_contiguous)
+                           mark_contblock((char *)p,
+!                                         S_DATA(def)->size);
+  
+                       } else if(SGC_RELBLOCK_P(p))
+                         x->str.str_self = (object *)
+!                          copy_relblock((char *)p, S_DATA(def)->size);
+                     }}
+                  break;
+  
+          case t_stream:
+                  switch (x->sm.sm_mode) {
+                  case smm_input:
+--- 355,394 ----
+                  if (cp == NULL)
+                          break;
+                  goto COPY_STRING;
+  
+          case t_structure:
++                 x->d.m = 2;
+                  sgc_mark_object(x->str.str_def);
+                  p = x->str.str_self;
+                  if (p == NULL)
+!                         {x->d.m = TRUE; break;}
+!                 {object def=x->str.str_def;
+!                  struct s_data *sdef=S_DATA(def);
+!                  unsigned char *s_type;
+!                  unsigned short *s_pos;
+!                  if((int)what_to_collect >= (int)t_contiguous &&
+!                     !inheap(sdef) && def->d.m==TRUE)
+!                    sdef=(struct s_data *)(((char *)sdef)+(rb_start1-rb_start));
+!                  s_type = sdef->raw->ust.ust_self;
+!                  s_pos = &USHORT(sdef->slot_position,0);
+!                  for (i = 0, j = sdef->length;  i < j;  i++)
+                     if (s_type[i]==0 &&
+                         ON_WRITABLE_PAGE(& STREF(object,x,s_pos[i]))
+                         )
+                       sgc_mark_object(STREF(object,x,s_pos[i]));
+                   if ((int)what_to_collect >= (int)t_contiguous) {
+                       if (inheap(x->str.str_self)) {
+                         if (what_to_collect == t_contiguous)
+                           mark_contblock((char *)p,
+!                                         sdef->size);
+  
+                       } else if(SGC_RELBLOCK_P(p))
+                         x->str.str_self = (object *)
+!                          copy_relblock((char *)p, sdef->size);
+                     }}
++                 x->d.m = TRUE; 
+                  break;
+  
+          case t_stream:
+                  switch (x->sm.sm_mode) {
+                  case smm_input:
+cmpnew/cmpinit.lsp
+*** cmpnew/cmpinit.lsp    Tue Jun 30 04:11:13 1992
+--- ../akcl-1-615/cmpnew/cmpinit.lsp      Mon Jun 22 18:41:51 1992
+***************
+*** 4,7 ****
+--- 4,10 ----
+  (load "sys-proclaim.lisp")
+  (setq compiler::*eval-when-defaults* '(compile eval load))
+  
+  ;(dolist (v '( cmpeval cmpopt cmptype cmpbind cmpinline cmploc cmpvar cmptop cmplet cmpcall cmpmulti cmplam cmplabel          cmpeval))   (load (format nil "~(~a~).lsp" v)))
++ (unless (get 'si::basic-wrapper 'si::s-data)
++   (setf (get 'si::s-data 'si::s-data) nil)
++   (load "../lsp/defstruct.lsp"))
+lsp/cmpinit.lsp
+*** lsp/cmpinit.lsp       Tue Jun 30 04:11:26 1992
+--- ../akcl-1-615/lsp/cmpinit.lsp Mon Jun 22 17:11:11 1992
+***************
+*** 5,12 ****
+  (or (fboundp 'si::get-&environment) (load "defmacro.lsp"))
+  ;(or (get 'si::s-data 'si::s-data)
+  ;    (progn (load "../lsp/setf.lsp") (load "../lsp/defstruct.lsp")))
+  (if (probe-file "sys-proclaim.lisp")(load "sys-proclaim.lisp"))
+! 
+! 
+  
+  ;;;;;
+--- 5,13 ----
+  (or (fboundp 'si::get-&environment) (load "defmacro.lsp"))
+  ;(or (get 'si::s-data 'si::s-data)
+  ;    (progn (load "../lsp/setf.lsp") (load "../lsp/defstruct.lsp")))
+  (if (probe-file "sys-proclaim.lisp")(load "sys-proclaim.lisp"))
+! (unless (get 'si::basic-wrapper 'si::s-data)
+!   (setf (get 'si::s-data 'si::s-data) nil)
+!   (load "../lsp/defstruct.lsp"))
+  
+  ;;;;;
+lsp/describe.lsp
+*** lsp/describe.lsp      Tue Jun 30 04:11:27 1992
+--- ../akcl-1-615/lsp/describe.lsp        Tue Jun 23 16:39:07 1992
+***************
+*** 266,282 ****
+  
+  (defun inspect-structure (x &aux name)
+    (format t "Structure of type ~a ~%Byte:[Slot Type]Slot Name   :Slot Value"
+            (setq name (type-of x)))
+!   (let* ((sd (get name 'si::s-data))
+           (spos (s-data-slot-position sd)))
+      (dolist (v (s-data-slot-descriptions sd))
+              (format t "~%~4d:~@[[~s] ~]~20a:~s"   
+!                     (aref spos (nth 4 v))
+!                     (let ((type (nth 2 v)))
+                        (if (eq t type) nil type))
+!                     (car v)
+!                     (structure-ref1 x (nth 4 v))))))
+      
+    
+  (defun inspect-object (object &aux (*inspect-level* *inspect-level*))
+    (inspect-indent)
+--- 266,282 ----
+  
+  (defun inspect-structure (x &aux name)
+    (format t "Structure of type ~a ~%Byte:[Slot Type]Slot Name   :Slot Value"
+            (setq name (type-of x)))
+!   (let* ((sd (structure-def x))
+           (spos (s-data-slot-position sd)))
+      (dolist (v (s-data-slot-descriptions sd))
+              (format t "~%~4d:~@[[~s] ~]~20a:~s"   
+!                     (aref spos (slot-offset v))
+!                     (let ((type (slot-type v)))
+                        (if (eq t type) nil type))
+!                     (slot-name v)
+!                     (structure-ref1 x (slot-offset v))))))
+      
+    
+  (defun inspect-object (object &aux (*inspect-level* *inspect-level*))
+    (inspect-indent)
+==============================================================================
+=============================== c/structure.c ================================
+Changes file for /kcl/c/structure.c
+Usage \n@s[Original text\n@s|Replacement Text\n@s]
+See the file rascal.ics.utexas.edu:/usr2/ftp/merge.c
+for a program to merge change files.  Anything not between
+ "\n@s[" and  "\n@s]" is a simply a comment.
+This file was constructed using emacs and  merge.el
+ by (Bill Schelter)  wfs@carl.ma.utexas.edu 
+
+
+****Change:(orig (15 17 d))
+@s[object siSstructure_print_function;
+object siSstructure_slot_descriptions;
+object siSstructure_include;
+
+@s|
+@s]
+
+
+****Change:(orig (18 18 a))
+@s[
+
+@s|
+#define COERCE_DEF(x) if (type_of(x)==t_symbol) \
+  x=getf(x->s.s_plist,siLs_data,Cnil)
+
+#define check_type_structure(x) \
+  if(type_of((x))!=t_structure) \
+    FEwrong_type_argument(Sstructure,(x)) 
+
+
+
+@s]
+
+
+****Change:(orig (22 31 c))
+@s[{
+	do {
+		if (type_of(x) != t_symbol)
+		        return(FALSE);
+
+@s,       } while (x != Cnil);
+	return(FALSE);
+}
+
+@s|{ if (x==y) return 1;
+  if (type_of(x)!= t_structure
+      || type_of(y)!=t_structure)
+    FEerror("bad call to structure_subtypep",0);
+  {if (S_DATA(y)->included == Cnil) return 0;
+   while ((x=S_DATA(x)->includes) != Cnil)
+     { if (x==y) return 1;}
+   return 0;
+ }}
+
+@s]
+
+
+****Change:(orig (32 32 a))
+@s[
+
+@s|
+static
+bad_raw_type()
+{           FEerror("Bad raw struct type",0);}
+
+
+
+@s]
+
+
+****Change:(orig (34 34 c))
+@s[structure_ref(x, name, n)
+
+@s|structure_ref(x, name, i)
+
+@s]
+
+
+****Change:(orig (36 38 c))
+@s[object x, name;
+int n;
+{
+	int i;
+
+@s|object x, name;
+int i;
+{unsigned short *s_pos;
+ COERCE_DEF(name);
+ if (type_of(x) != t_structure ||
+     (type_of(name)!=t_structure) ||
+     !structure_subtypep(x->str.str_def, name))
+   FEwrong_type_argument((type_of(name)==t_structure ?
+		          S_DATA(name)->name : name),
+		         x);
+ s_pos = &SLOT_POS(x->str.str_def,0);
+ switch((SLOT_TYPE(x->str.str_def,i)))
+   {
+   case aet_object: return(STREF(object,x,s_pos[i]));
+   case aet_fix:  return(make_fixnum((STREF(int,x,s_pos[i]))));
+   case aet_ch:  return(code_char(STREF(char,x,s_pos[i])));
+   case aet_bit:
+   case aet_char: return(make_fixnum(STREF(char,x,s_pos[i])));
+   case aet_sf: return(make_shortfloat(STREF(shortfloat,x,s_pos[i])));
+   case aet_lf: return(make_longfloat(STREF(longfloat,x,s_pos[i])));
+   case aet_uchar: return(make_fixnum(STREF(unsigned char,x,s_pos[i])));
+   case aet_ushort: return(make_fixnum(STREF(unsigned short,x,s_pos[i])));
+   case aet_short: return(make_fixnum(STREF(short,x,s_pos[i])));
+   default:
+     bad_raw_type();
+     return 0;
+   }}
+
+@s]
+
+
+****Change:(orig (40 43 c))
+@s[       if (type_of(x) != t_structure ||
+	    !structure_subtypep(x->str.str_name, name))
+		FEwrong_type_argument(name, x);
+	return(x->str.str_self[n]);
+
+@s|
+void
+siLstructure_ref1()
+{object x=vs_base[0];
+ int n=fix(vs_base[1]);
+ object def;
+ check_type_structure(x);
+ def=x->str.str_def;
+ if(n>= S_DATA(def)->length)
+   FEerror("Structure ref out of bounds",0);
+ vs_base[0]=structure_ref(x,x->str.str_def,n);
+ vs_top=vs_base+1;
+
+@s]
+
+
+****Change:(orig (45 45 a))
+@s[}
+
+
+@s|}
+
+void
+siLstructure_set1()
+{object x=vs_base[0];
+ int n=fix(vs_base[1]);
+ object v=vs_base[2];
+ object def;
+ check_type_structure(x);
+ def=x->str.str_def;
+ if(n>= S_DATA(def)->length)
+   FEerror("Structure ref out of bounds",0);
+ vs_base[0]=structure_set(x,x->str.str_def,n,v);
+ vs_top=vs_base+1;
+}  
+
+
+
+@s]
+
+
+****Change:(orig (47 47 c))
+@s[structure_set(x, name, n, v)
+
+@s|structure_set(x, name, i, v)
+
+@s]
+
+
+****Change:(orig (49 51 c))
+@s[object x, name, v;
+int n;
+{
+	int i;
+
+@s|object x, name, v;
+int i;
+{unsigned short *s_pos;
+ 
+ COERCE_DEF(name);
+ if (type_of(x) != t_structure ||
+     type_of(name) != t_structure ||
+     !structure_subtypep(x->str.str_def, name))
+   FEwrong_type_argument((type_of(name)==t_structure ?
+		          S_DATA(name)->name : name)
+		         , x);
+
+@s]
+
+
+****Change:(orig (53 57 c))
+@s[       if (type_of(x) != t_structure ||
+	    !structure_subtypep(x->str.str_name, name))
+		FEwrong_type_argument(name, x);
+	x->str.str_self[n] = v;
+
+@s,       return(v);
+
+@s|#ifdef SGC
+ /* make sure the structure header is on a writable page */
+ if (x->d.m) FEerror("bad gc field",0); else  x->d.m = 0;
+#endif   
+ 
+ s_pos= & SLOT_POS(x->str.str_def,0);
+ switch(SLOT_TYPE(x->str.str_def,i)){
+   
+   case aet_object: STREF(object,x,s_pos[i])=v; break;
+   case aet_fix:  (STREF(int,x,s_pos[i]))=fix(v); break;
+   case aet_ch:  STREF(char,x,s_pos[i])=char_code(v); break;
+   case aet_bit:
+   case aet_char: STREF(char,x,s_pos[i])=fix(v); break;
+   case aet_sf: STREF(shortfloat,x,s_pos[i])=sf(v); break;
+   case aet_lf: STREF(longfloat,x,s_pos[i])=lf(v); break;
+   case aet_uchar: STREF(unsigned char,x,s_pos[i])=fix(v); break;
+   case aet_ushort: STREF(unsigned short,x,s_pos[i])=fix(v); break;
+   case aet_short: STREF(short,x,s_pos[i])=fix(v); break;
+ default:
+   bad_raw_type();
+
+   }
+ return(v);
+
+@s]
+
+
+****Change:(orig (59 59 a))
+@s[}
+
+
+@s|}
+
+void
+siLstructure_subtype_p()
+{object x,y;
+ check_arg(2);
+ x=vs_base[0];
+ y=vs_base[1];
+ if (type_of(x)!=t_structure)
+   {vs_base[0]=Cnil; goto BOTTOM;}
+ x=x->str.str_def;
+ COERCE_DEF(y);
+ if (structure_subtypep(x,y)) vs_base[0]=Ct;
+ else vs_base[0]=Cnil;
+ BOTTOM:
+ vs_top=vs_base+1;
+}
+ 
+static object
+slot_name(x)
+     object x;
+{
+  if(type_of(x)==t_cons)
+    return car(x);
+  if(type_of(x)==t_structure)
+    return x->str.str_self[0];
+  return Cnil;
+}
+
+
+@s]
+
+
+****Change:(orig (64 64 a))
+@s[object x;
+{
+	object *p, s;
+
+@s|object x;
+{
+	object *p, s;
+	struct s_data *def=S_DATA(x->str.str_def);
+
+@s]
+
+
+****Change:(orig (66 69 c))
+@s[
+	s = getf(x->str.str_name->s.s_plist,
+	         siSstructure_slot_descriptions, Cnil);
+	vs_push(x->str.str_name);
+
+@s|       
+	s = def->slot_descriptions;
+	vs_push(def->name);
+
+@s]
+
+
+****Change:(orig (72 73 c))
+@s[       for (i=0, n=x->str.str_length;  !endp(s)&&i<n;  s=s->c.c_cdr, i++) {
+		*p = make_cons(car(s->c.c_car), Cnil);
+
+@s|       for (i=0, n=def->length;  !endp(s)&&i<n;  s=s->c.c_cdr, i++) {
+		*p = make_cons(slot_name(s->c.c_car), Cnil);
+
+@s]
+
+
+****Change:(orig (75 75 c))
+@s[               *p = make_cons(x->str.str_self[i], Cnil);
+
+@s|               *p = make_cons(structure_ref(x,x->str.str_def,i), Cnil);
+
+@s]
+
+
+****Change:(orig (81 81 a))
+@s[       stack_cons();
+	return(vs_pop);
+}
+
+
+@s|       stack_cons();
+	return(vs_pop);
+}
+
+void
+
+@s]
+
+
+****Change:(orig (84 85 c))
+@s[       object x;
+	int narg, i;
+
+@s|  object x,name,*base;
+  struct s_data *def;
+  int narg, i,size;
+  base=vs_base;
+  if ((narg = vs_top - base) == 0)
+    too_few_arguments();
+  x = alloc_object(t_structure);
+  name=base[0];
+  COERCE_DEF(name);
+  if (type_of(name)!=t_structure  ||
+      (def=S_DATA(name))->length != --narg)
+    FEerror("Bad make_structure args for type ~a",1,
+	    base[0]);
+  x->str.str_def = name;
+  x->str.str_self = NULL;
+  size=S_DATA(name)->size;
+  base[0] = x;
+  x->str.str_self = (object *)
+    (def->staticp == Cnil ? alloc_relblock(size)
+     : alloc_contblock(size));
+  /* There may be holes in the structure.
+     We want them zero, so that equal can work better.
+     */
+  if (S_DATA(name)->has_holes != Cnil)
+    bzero(x->str.str_self,size);
+  {unsigned char *s_type;
+   unsigned short *s_pos;
+   s_pos= (&SLOT_POS(x->str.str_def,0));
+   s_type = (&(SLOT_TYPE(x->str.str_def,0)));
+   base=base+1;
+   for (i = 0;  i < narg;  i++)
+     {object v=base[i];
+      switch(s_type[i]){
+	     
+      case aet_object: STREF(object,x,s_pos[i])=v; break;
+      case aet_fix:  (STREF(int,x,s_pos[i]))=fix(v); break;
+      case aet_ch:  STREF(char,x,s_pos[i])=char_code(v); break;
+      case aet_bit:
+      case aet_char: STREF(char,x,s_pos[i])=fix(v); break;
+      case aet_sf: STREF(shortfloat,x,s_pos[i])=sf(v); break;
+      case aet_lf: STREF(longfloat,x,s_pos[i])=lf(v); break;
+      case aet_uchar: STREF(unsigned char,x,s_pos[i])=fix(v); break;
+      case aet_ushort: STREF(unsigned short,x,s_pos[i])=fix(v); break;
+      case aet_short: STREF(short,x,s_pos[i])=fix(v); break;
+      default:
+	bad_raw_type();
+
+@s]
+
+
+****Change:(orig (87 97 c))
+@s[       if ((narg = vs_top - vs_base) == 0)
+		too_few_arguments();
+	x = alloc_object(t_structure);
+	x->str.str_name = vs_base[0];
+
+@s,               x->str.str_self[i] = vs_top[i];
+
+@s|      }}
+   vs_top = base;
+   vs_base=base-1;
+
+ }
+
+@s]
+
+
+****Change:(orig (99 99 a))
+@s[}
+
+
+@s|}
+
+void
+
+@s]
+
+
+****Change:(orig (103 103 c))
+@s[       object x, y;
+	int i, j;
+
+@s|       object x, y;
+	struct s_data *def;
+
+@s]
+
+
+****Change:(orig (105 105 c))
+@s[
+	check_arg(2);
+
+@s|
+	if (vs_top-vs_base < 1) too_few_arguments();
+
+@s]
+
+
+****Change:(orig (107 110 c))
+@s[       if (type_of(x) != t_structure || x->str.str_name != vs_base[1])
+		FEwrong_type_argument(vs_base[1], x);
+	vs_base[1] = y = alloc_object(t_structure);
+	y->str.str_name = x->str.str_name;
+
+@s|       check_type_structure(x);
+	vs_base[0] = y = alloc_object(t_structure);
+	def=S_DATA(y->str.str_def = x->str.str_def);
+
+@s]
+
+
+****Change:(orig (112 116 c))
+@s[       y->str.str_length = j = x->str.str_length;
+	y->str.str_self = (object *)alloc_relblock(sizeof(object)*j);
+	for (i = 0;  i < j;  i++)
+		y->str.str_self[i] = x->str.str_self[i];
+
+@s,       vs_base++;
+
+@s|       y->str.str_self = (object *)alloc_relblock(def->size);
+	bcopy(x->str.str_self,y->str.str_self,def->size);
+	vs_top=vs_base+1;
+
+@s]
+
+
+****Change:(orig (118 118 a))
+@s[}
+
+
+@s|}
+
+void
+siLcopy_structure_header()
+{
+	object x, y;
+
+	if (vs_top-vs_base < 1) too_few_arguments();
+	x = vs_base[0];
+	check_type_structure(x);
+	vs_base[0] = y = alloc_object(t_structure);
+	y->str.str_def = x->str.str_def;
+	y->str.str_self = x->str.str_self;
+	vs_top=vs_base+1;
+}
+
+
+void
+
+@s]
+
+
+****Change:(orig (122 124 c))
+@s[       if (type_of(vs_base[0]) != t_structure)
+		FEwrong_type_argument(Sstructure, vs_base[0]);
+	vs_base[0] = vs_base[0]->str.str_name;
+
+@s|       check_type_structure(vs_base[0]);
+	vs_base[0] = S_DATA(vs_base[0]->str.str_def)->name;
+
+@s]
+
+
+****Change:(orig (127 127 c))
+@s[}
+
+siLstructure_ref()
+
+@s|}
+
+#define FIND_SLOT(str,name) ((type_of(name)==t_fixnum)?fix(name): \
+		             structure_slot_position(str,name))
+
+object
+structure_ref_new(x, name, i)
+     object x,name,i;
+
+@s]
+
+
+****Change:(orig (129 131 c))
+@s[       object x;
+	int i;
+	check_arg(3);
+
+@s|  return structure_ref(x,name,FIND_SLOT(x,i));
+}
+
+@s]
+
+
+****Change:(orig (133 144 c))
+@s[       x = vs_base[0];
+	if (type_of(x) != t_structure ||
+	    !structure_subtypep(x->str.str_name, vs_base[1]))
+		FEwrong_type_argument(vs_base[1], x);
+
+@s,       vs_base[0] = x->str.str_self[i];
+	vs_top = vs_base+1;
+
+@s|object
+structure_set_new(x, name, i, v)
+     object x,name,i,v;
+{
+  return structure_set(x,name,FIND_SLOT(x,i),v);
+
+@s]
+
+
+****Change:(orig (146 146 a))
+@s[}
+
+
+@s|}
+
+void
+siLstructure_ref()
+{
+  check_arg(3);
+  vs_base[0]=structure_ref_new(vs_base[0],vs_base[1],vs_base[2]);
+  vs_top=vs_base+1;
+}
+
+void
+
+@s]
+
+
+****Change:(orig (149 150 d))
+@s[siLstructure_set()
+{
+	object x;
+	int i;
+
+@s|siLstructure_set()
+{
+
+@s]
+
+
+****Change:(orig (152 163 c))
+@s[
+	x = vs_base[0];
+	if (type_of(x) != t_structure ||
+	    !structure_subtypep(x->str.str_name, vs_base[1]))
+
+@s,       x->str.str_self[i] = vs_base[3];
+
+@s|       structure_set_new(vs_base[0],vs_base[1],vs_base[2],vs_base[3]);
+
+@s]
+
+
+****Change:(orig (166 166 a))
+@s[       vs_base = vs_top-1;
+}
+
+
+@s|       vs_base = vs_top-1;
+}
+
+void
+
+@s]
+
+
+****Change:(orig (228 228 c))
+@s[init_structure_function()
+
+@s|void
+siLmake_s_data_structure()
+{object x,y,raw,*base;
+ int i;
+ check_arg(5);
+ x=vs_base[0];
+ base=vs_base;
+ raw=vs_base[1];
+ y=alloc_object(t_structure);
+ y->str.str_def=y;
+ y->str.str_self = (object *)( x->v.v_self);
+ S_DATA(y)->name  =siLs_data;
+ S_DATA(y)->length=(raw->v.v_dim);
+ S_DATA(y)->raw   =raw;
+ for(i=3; i<raw->v.v_dim; i++)
+   y->str.str_self[i]=Cnil;
+ S_DATA(y)->slot_position=base[2];
+ S_DATA(y)->slot_descriptions=base[3];
+ S_DATA(y)->staticp=base[4];
+ S_DATA(y)->size = (raw->v.v_dim)*sizeof(object);
+ vs_base[0]=y;
+ vs_top=vs_base+1;
+}
+
+object siSstructure_init,siSstructure_init_named;
+object siSname,siSdefault_init;
+object siSraw,siSslot_position,siSsize,siSstaticp,siSslot_descriptions;
+
+static object
+slot_value(str,name)
+     object str,name;
+
+@s]
+
+
+****Change:(orig (230 237 c))
+@s[       siSstructure_print_function
+	= make_si_ordinary("STRUCTURE-PRINT-FUNCTION");
+	enter_mark_origin(&siSstructure_print_function);
+	siSstructure_slot_descriptions
+
+@s,       enter_mark_origin(&siSstructure_include);
+
+@s| top:
+  if(type_of(str)==t_structure)
+    return structure_ref_new(str,str->str.str_def,name);
+  if(str->c.c_car==siSstructure_init_named)
+    {object new=get(str->c.c_cdr,siLs_data);
+     str->c.c_car=siSstructure_init;
+     str->c.c_cdr=(type_of(new)==t_structure)?new:cdr(new);}
+  if(siSstructure_init!=car(str))
+    FEerror("Illegal call to SI:MAKE-STRUCTURES 1",0);
+  {object key=intern(coerce_to_string(name),keyword_package);
+   object value=getf(cdddr(str),key,NULL);
+   if(value!=NULL)
+     return value;
+   else
+     {object slots;
+      if(str==caddr(str)&&name==siSslot_descriptions)
+	FEerror("Illegal call to SI:MAKE-STRUCTURES 2",0);
+      slots=slot_value(caddr(str),siSslot_descriptions);
+      for(;!endp(slots);slots=cdr(slots))
+	if(name==slot_value(car(slots),siSname))
+	  {object result,form=slot_value(car(slots),siSdefault_init);
+	   object *old_vs_base=vs_base,*old_vs_top=vs_top;
+	   vs_base=vs_top;vs_push(form);Leval();result=vs_base[0];
+	   vs_base=old_vs_base; vs_top=old_vs_top;
+	   return result;}
+      FEerror("Illegal call to SI:MAKE-STRUCTURES 3",0);}}
+  return Cnil;
+}
+
+@s]
+
+
+****Change:(orig (238 238 a))
+@s[
+
+@s|
+int 
+structure_slot_position(str,name)
+     object str,name;
+{
+  if(type_of(name)==t_fixnum)
+    return fix(name);
+  else
+    {object slotd_list;
+     int pos;
+     check_type_structure(str);
+     slotd_list=S_DATA(str->str.str_def)->slot_descriptions;
+     for(pos=0; type_of(slotd_list)==t_cons; pos++,slotd_list=cdr(slotd_list))
+       {object slotd=car(slotd_list);
+	if(name==((type_of(slotd)==t_structure)?
+		  slotd->str.str_self[0]:slot_value(slotd,siSname)))
+	  return pos;}
+     FEerror("Slot ~S not found in structure ~S",2,name,str);
+     return 0;}  
+}
+
+static object
+make_structures_internal(value)
+     object value;
+{
+  object str,def;
+  int def_index,i,ind;
+
+  switch(type_of(value))
+    {case t_cons:
+       if(value->c.c_car==siSstructure_init_named)
+	 {object new=get(value->c.c_cdr,siLs_data);
+	  value->c.c_car=siSstructure_init;
+	  value->c.c_cdr=(type_of(new)==t_structure)?new:cdr(new);}
+       if(car(value)!=siSstructure_init)
+	 {value->c.c_car=make_structures_internal(value->c.c_car);
+	  value->c.c_cdr=make_structures_internal(value->c.c_cdr);
+	  break;}
+       if(type_of(cadr(value))==t_structure)
+	 {value=value->c.c_cdr->c.c_car;
+	  break;}
+       {object def=caddr(value),plist=cdddr(value),result;
+	object slots,slots_tail;
+	int size,staticp,len,i;
+	if(def!=value)def=make_structures_internal(def);
+	result=alloc_object(t_structure);
+	result->str.str_def=(def==value)?result:def;
+	result->str.str_self=NULL;
+	value->c.c_cdr->c.c_car=result;
+	size=fixint(slot_value(def,siSsize));
+	staticp=Cnil!=slot_value(def,siSstaticp);
+	slots=slot_value(def,siSslot_descriptions);
+	len=length(slots);
+	result->str.str_self=(object *)(staticp?alloc_contblock(size):
+		                                alloc_relblock(size));
+	bzero(result->str.str_self,size);
+	if(def==value)
+	  {S_DATA(result)->raw=slot_value(def,siSraw);
+	   S_DATA(result)->slot_position=slot_value(def,siSslot_position);}
+	for(i=0,slots_tail=slots; i<len; i++,slots_tail=cdr(slots_tail))
+	  {object svalue=slot_value(value,slot_value(car(slots_tail),siSname));
+	   structure_set(result,result->str.str_def,i,svalue);}
+	for(i=0,slots_tail=slots; i<len; i++,slots_tail=cdr(slots_tail))
+	  {object svalue=structure_ref(result,result->str.str_def,i);
+	   svalue=make_structures_internal(svalue);
+	   structure_set(result,result->str.str_def,i,svalue);}
+	value=result;
+	break;}
+     case t_vector:
+       if ((enum aelttype)value->v.v_elttype == aet_object)
+	 {int i,len=value->v.v_dim;
+	  for(i=0; i<len; i++)
+	    value->v.v_self[i]=make_structures_internal(value->v.v_self[i]);}
+       break;
+     case t_symbol:
+       {object plist=value->s.s_plist,next;
+	for(;!endp(plist);plist=cddr(plist))
+	  {next=plist->c.c_cdr;
+	   if(plist->c.c_car==siLs_data&&
+	      type_of(next->c.c_car)==t_cons)
+	     next->c.c_car=make_structures_internal(next->c.c_car);}
+	break;}}
+  return value;   
+}
+
+void
+siLmake_structures()
+{
+  check_arg(1);
+  vs_base[0]=make_structures_internal(vs_base[0]);
+}
+
+void
+siLstructure_def()
+{check_arg(1);
+ check_type_structure(vs_base[0]);
+  vs_base[0]=vs_base[0]->str.str_def;
+}
+
+short aet_sizes [] = {
+sizeof(object),  /* aet_object  t  */
+sizeof(char),  /* aet_ch  string-char  */
+sizeof(char),  /* aet_bit  bit  */
+sizeof(fixnum),  /* aet_fix  fixnum  */
+sizeof(float),  /* aet_sf  short-float  */
+sizeof(double),  /* aet_lf  long-float  */
+sizeof(char),  /* aet_char  signed char */
+sizeof(char),  /* aet_uchar  unsigned char */
+sizeof(short),  /* aet_short  signed short */
+sizeof(short)  /* aet_ushort  unsigned short   */
+};
+
+  
+
+
+
+void
+siLsize_of() 
+{ object x= vs_base[0];
+  int i;
+  i= aet_sizes[get_aelttype(x)];
+  vs_base[0]=make_fixnum(i);
+}
+  
+void
+siLaet_type()
+{vs_base[0]=make_fixnum(get_aelttype(vs_base[0]));}
+
+
+/* Return N such that something of type ARG can be aligned on
+   an address which is a multiple of N */
+
+
+void
+siLalignment()
+{struct {double x; int y; double z;
+	 float x1; int y1; float z1;}
+ joe;
+ joe.z=3.0;
+ 
+ if (vs_base[0]==Slong_float)
+   {vs_base[0]=make_fixnum((int)&joe.z- (int)&joe.y); return;}
+ else
+   if (vs_base[0]==Sshort_float)
+     {vs_base[0]=make_fixnum((int)&(joe.z1)-(int)&(joe.y1)); return;}
+   else
+     {siLsize_of();}
+}
+   
+void
+swap_structure_contents(str1,str2)
+   object str1,str2;
+{
+  object def1,*self1;
+  check_type_structure(str1);
+  check_type_structure(str2);
+  def1=str1->str.str_def;
+  self1=str1->str.str_self;
+  str1->str.str_def=str2->str.str_def;
+  str1->str.str_self=str2->str.str_self;
+  str2->str.str_def=def1;
+  str2->str.str_self=self1;
+}
+
+void
+siLswap_structure_contents()
+{
+  check_arg(2);
+  swap_structure_contents(vs_base[0],vs_base[1]);
+  vs_base[0]=Cnil;
+  vs_top=vs_base+1;
+}
+
+void
+siLset_structure_def()
+{check_arg(2);
+ check_type_structure(vs_base[0]);
+ check_type_structure(vs_base[1]);
+ vs_base[0]->str.str_def=vs_base[1];
+ vs_base[0]=vs_base[1];
+ vs_top=vs_base+1;
+}
+
+init_structure_function()
+{
+        siLs_data=make_si_ordinary("S-DATA");
+	siSstructure_init=make_si_ordinary("STRUCTURE-INIT");
+	siSstructure_init_named=make_si_ordinary("STRUCTURE-INIT-NAMED");
+	siSname=make_si_ordinary("NAME");
+	siSdefault_init=make_si_ordinary("DEFAULT-INIT");
+	siSraw=make_si_ordinary("RAW");
+	siSslot_position=make_si_ordinary("SLOT-POSITION");
+	siSsize=make_si_ordinary("SIZE");
+	siSstaticp=make_si_ordinary("STATICP");
+	siSslot_descriptions=make_si_ordinary("SLOT-DESCRIPTIONS");
+
+@s]
+
+
+****Change:(orig (239 239 a))
+@s[       make_si_function("MAKE-STRUCTURE", siLmake_structure);
+
+@s|       make_si_function("MAKE-STRUCTURE", siLmake_structure);
+	make_si_function("MAKE-S-DATA-STRUCTURE",siLmake_s_data_structure);
+
+@s]
+
+
+****Change:(orig (240 240 a))
+@s[       make_si_function("COPY-STRUCTURE", siLcopy_structure);
+
+@s|       make_si_function("COPY-STRUCTURE", siLcopy_structure);
+	make_si_function("COPY-STRUCTURE-HEADER", siLcopy_structure_header);
+
+@s]
+
+
+****Change:(orig (242 242 a))
+@s[       make_si_function("STRUCTURE-REF", siLstructure_ref);
+
+@s|       make_si_function("STRUCTURE-REF", siLstructure_ref);
+	make_si_function("STRUCTURE-DEF", siLstructure_def);
+	make_si_function("STRUCTURE-REF1", siLstructure_ref1);
+	make_si_function("STRUCTURE-SET1", siLstructure_set1);
+
+@s]
+
+
+****Change:(orig (245 245 c))
+@s[       make_si_function("STRUCTUREP", siLstructurep);
+
+
+@s|       make_si_function("STRUCTUREP", siLstructurep);
+	make_si_function("SIZE-OF", siLsize_of);
+	make_si_function("ALIGNMENT",siLalignment);
+	make_si_function("STRUCTURE-SUBTYPE-P",siLstructure_subtype_p);
+
+@s]
+
+
+****Change:(orig (247 247 a))
+@s[       make_si_function("LIST-NTH", siLlist_nth);
+
+@s|       make_si_function("LIST-NTH", siLlist_nth);
+	make_si_function("AET-TYPE",siLaet_type);
+	make_si_function("SWAP-STRUCTURE-CONTENTS",siLswap_structure_contents);
+	make_si_function("SET-STRUCTURE-DEF", siLset_structure_def);
+	make_si_function("MAKE-STRUCTURES", siLmake_structures);
+
+
+@s]
+
+==============================================================================
+============================== V/lsp/defstruct.lsp =============================
+Changes file for /kcl/lsp/defstruct.lsp
+Usage \n@s[Original text\n@s|Replacement Text\n@s]
+See the file rascal.ics.utexas.edu:/usr2/ftp/merge.c
+for a program to merge change files.  Anything not between
+ "\n@s[" and  "\n@s]" is a simply a comment.
+This file was constructed using emacs and  merge.el
+ by (Bill Schelter)  wfs@carl.ma.utexas.edu 
+
+
+****Change:(orig (20 71 c))
+@s[(defun make-access-function (name conc-name type named
+                             slot-name default-init slot-type read-only
+                             offset)
+  (declare (ignore named default-init slot-type))
+
+@s,          ((error "~S is an illegal structure type." type)))))
+
+@s|(defvar *accessors* (make-array 10 :adjustable t))
+(defvar *list-accessors* (make-array 2 :adjustable t))
+(defvar *vector-accessors* (make-array 2 :adjustable t))
+
+@s]
+
+
+****Change:(orig (72 72 a))
+@s[
+
+@s|
+(or (fboundp 'record-fn) (setf (symbol-function 'record-fn)
+		               #'(lambda (&rest l) l nil)))
+
+@s]
+
+
+****Change:(orig (73 73 a))
+@s[
+
+@s|
+(defun boot-slot-value (str name)
+  (if (structurep str)
+      (structure-ref str (structure-def str) name)
+      (getf (cdddr str) (intern (string name) :keyword))))
+
+(defun boot-set-slot-value (str name new-value)
+  (if (structurep str)
+      (structure-set str (structure-def str) name new-value)
+      (setf (getf (cdddr str) (intern (string name) :keyword)) new-value)))
+
+(defun boot-subtypep (type1 type2)
+  (or (eq type1 type2)
+      (let* ((s-data (get type1 's-data))
+	     (include (boot-s-data-name (boot-slot-value s-data 'includes))))
+	(boot-subtypep include type2))))
+
+(defun make-slot-boot (&rest args)
+  (if (get 's-data 's-data)
+      (apply #'make-slot args)
+      (list* 'structure-init
+	     nil
+	     '(structure-init-named . slot)
+	     args)))
+
+(defun make-s-data-boot (&rest args)
+  (if (get 's-data 's-data)
+      (apply #'make-s-data args)
+      (list* 'structure-init
+	     nil
+	     '(structure-init-named . s-data)
+	     args)))
+
+(defun make-boot-accessor (slot accessor)
+  (setf (symbol-function accessor) 
+	#'(lambda (object)
+	    (boot-slot-value object slot)))
+  (let ((writer (intern (format nil "SET ~A" accessor))))
+    (setf (symbol-function writer)
+	  #'(lambda (object value)
+	      (boot-set-slot-value object slot value)))
+    (eval `(defsetf ,accessor ,writer))))
+
+(defmacro defstructboot (name &rest slots)
+  (let ((conc-name (if (listp name)
+		       (string (second (assoc :conc-name (cdr name))))
+		       (format nil "~A-" name))))
+    `(progn
+       ,@(mapcar #'(lambda (slot)
+		     (let ((fname (intern (format nil "~A~A" conc-name slot))))
+		       `(make-boot-accessor ',slot ',fname)))
+	         slots))))
+
+(defstructboot (slot (:conc-name boot-slot-))
+  name default-init type read-only offset accessor-name type-changed)
+
+(defstructboot (s-data-internal (:conc-name boot-s-data-))
+  name length raw included includes staticp print-function
+  slot-descriptions slot-position size has-holes)
+
+(defstructboot (basic-wrapper (:conc-name boot-wrapper-))
+  cache-number-vector state class)
+
+(defstructboot (s-data (:conc-name boot-s-data-))
+  frozen documentation constructors offset
+  named type conc-name)
+
+(defun make-access-function (name conc-name type named include no-fun slot)
+  (declare (ignore named))
+  
+  (let* ((slot-name (boot-slot-name slot))
+	 (slot-type (boot-slot-type slot))
+	 (read-only (boot-slot-read-only slot))
+	 (offset (boot-slot-offset slot))
+	 (access-function
+	  (intern (si:string-concatenate (string conc-name)
+		                         (string slot-name))))
+	accsrs dont-overwrite)
+    (unless (boot-slot-accessor-name slot)
+      (setf (boot-slot-accessor-name slot) access-function))
+    (ecase type
+      ((nil)
+       (setf accsrs *accessors*))
+      (list
+	(setf accsrs *list-accessors*))
+      (vector
+	(setf accsrs *vector-accessors*)))
+    (or (> (length  accsrs) offset)
+	(adjust-array accsrs (+ offset 10)))
+    (unless
+     dont-overwrite
+     (record-fn access-function 'defun '(t) slot-type)
+     (or no-fun
+	 (and (fboundp access-function)
+	      (eq (aref accsrs offset) (symbol-function access-function)))
+	 (setf (symbol-function access-function)
+	   (or (aref accsrs offset)
+	       (setf (aref accsrs offset)
+		     (cond  ((eq accsrs *accessors*)
+		                #'(lambda (x)
+		                    (or (structurep x)
+		                        (error "~a is not a structure" x))
+		                    (structure-ref1 x offset)))
+		               ((eq accsrs *list-accessors*)
+		                #'(lambda(x)
+		                    (si:list-nth offset x)))
+		               ((eq accsrs *vector-accessors*)
+		                #'(lambda(x)
+		                    (aref x offset)))))))))
+    (cond (read-only
+	    (remprop access-function 'structure-access)
+	    (setf (get access-function 'struct-read-only) t))
+	  (t (remprop access-function 'setf-update-fn)
+	     (remprop access-function 'setf-lambda)
+	     (remprop access-function 'setf-documentation)
+	     (let ((tem (get access-function 'structure-access)))
+	       (cond ((and (consp tem) include
+		           (if (consp (get include 's-data))
+		               (boot-subtypep include (car tem))
+		               (subtypep include (car tem)))
+		           (eql (cdr tem) offset))
+		      ;; don't change overwrite accessor of subtype.
+		      (setq dont-overwrite t)
+		      )
+		     (t  (setf (get access-function 'structure-access)
+		               (cons (if type type name) offset)))))))
+    nil))
+
+
+@s]
+
+
+****Change:(orig (80 89 c))
+@s[                     (cond ((null x)
+                            ;; If the slot-description is NIL,
+                            ;;  it is in the padding of initial-offset.
+                            nil)
+
+@s,                           (t (car x))))
+
+@s|                    (or (boot-slot-name x)
+		         (and (boot-slot-default-init x)
+		              ;; If the slot name is NIL,
+		              ;;  it is the structure name.
+		              ;;  This is for typed structures with names.
+		              (list 'quote (boot-slot-default-init x)))))
+
+@s]
+
+
+****Change:(orig (94 97 c))
+@s[                     (cond ((null x) nil)
+                           ((null (car x)) nil)
+                           ((null (cadr x)) (list (car x)))
+                           (t (list (list  (car x) (cadr x))))))
+
+@s|                    (when (boot-slot-name x)
+		       (if (boot-slot-default-init x)
+		           (list (list (boot-slot-name x) (boot-slot-default-init x)))
+		           (list (boot-slot-name x)))))
+
+@s]
+
+
+****Change:(orig (248 248 d))
+@s[          ((error "~S is an illegal structure type" type)))))
+
+
+
+@s|          ((error "~S is an illegal structure type" type)))))
+
+
+@s]
+
+
+****Change:(orig (252 265 d))
+@s[
+(defun make-copier (name copier type named)
+  (declare (ignore named))
+  (cond ((null type)
+
+@s,        ((error "~S is an illegal structure type." type))))
+
+
+
+@s|
+@s]
+
+
+****Change:(orig (267 275 c))
+@s[  (cond ((null type)
+         ;; If TYPE is NIL, the predicate searches the link
+         ;;  of structure-include, until there is no included structure.
+         `(defun ,predicate (x)
+
+@s,                   (setq n (get n 'structure-include))))))
+
+@s|  (cond ((null type))
+	 ; done in define-structure
+
+@s]
+
+
+****Change:(orig (282 283 c))
+@s[                 (> (length x) ,name-offset)
+                 (eq (elt x ,name-offset) ',name))))
+
+@s|                 (> (the fixnum (length x)) ,name-offset)
+                 (eq (aref (the (vector t) x) ,name-offset) ',name))))
+
+@s]
+
+
+****Change:(orig (294 294 a))
+@s[                         ((= i 0) (and (consp y) (eq (car y) ',name)))
+
+@s|                         ((= i 0) (and (consp y) (eq (car y) ',name)))
+		         (declare (fixnum i))
+
+@s]
+
+
+****Change:(orig (300 301 c))
+@s[;;;  and returns a list of the form:
+;;;        (slot-name default-init slot-type read-only offset)
+
+@s|;;;  and returns a slot.
+
+@s]
+
+
+****Change:(orig (325 325 c))
+@s[    (list slot-name default-init slot-type read-only offset)))
+
+@s|    (make-slot-boot :name slot-name
+		    :default-init default-init
+		    :type slot-type
+		    :read-only read-only
+		    :offset offset)))
+
+@s]
+
+
+****Change:(orig (335 335 c))
+@s[      (let ((sds (member (caar olds) news :key #'car)))
+
+@s|      (let* ((old (car olds))
+	     (sds (member (boot-slot-name old) news :key #'slot-name))
+	     (new (car sds)))
+
+@s]
+
+
+****Change:(orig (337 348 c))
+@s[               (when (and (null (cadddr (car sds)))
+                          (cadddr (car olds)))
+                     ;; If read-only is true in the old
+                     ;;  and false in the new, signal an error.
+
+@s,                           (car (cddddr (car olds))))
+
+@s|               (when (and (null (boot-slot-read-only new))
+                          (boot-slot-read-only old))
+		 ;; If read-only is true in the old
+		 ;;  and false in the new, signal an error.
+		 (error "~S is an illegal include slot-description."
+		        new))
+	       ;; If
+	       (setf (boot-slot-type new)
+		     (best-array-element-type (boot-slot-type new)))
+	       (when (not (equal (normalize-type (or (boot-slot-type new) t))
+		                 (normalize-type (or (boot-slot-type old) t))))
+		 (error "Type mismmatch for included slot ~a" new))
+	       (cons (make-slot :name (boot-slot-name new)
+		                :default-init (boot-slot-default-init new)
+		                :type (boot-slot-type new)
+		                :read-only (boot-slot-read-only new)
+		                :offset (boot-slot-offset old))
+
+@s]
+
+
+****Change:(orig (353 353 a))
+@s[                     (overwrite-slot-descriptions news (cdr olds))))))))
+
+
+@s|                     (overwrite-slot-descriptions news (cdr olds))))))))
+
+(defvar *all-t-s-type* (make-array 50 :element-type 'unsigned-char :static t))
+
+@s]
+
+
+****Change:(orig (355 355 c))
+@s[;;; The DEFSTRUCT macro.
+
+@s|(defun make-t-type (n include slot-descriptions &aux i)
+  (let ((res  (make-array n :element-type 'unsigned-char :static t)))
+    (when include
+      (let ((tem (get include 's-data))raw)
+	(or tem (error "Included structure undefined ~a" include))
+	(setq raw (boot-s-data-raw tem))
+	(dotimes (i (min n (length raw)))
+	  (setf (aref res i) (aref raw i)))))
+    (dolist (v slot-descriptions)
+      (setq i (boot-slot-offset v))
+      (let ((type (boot-slot-type v)))
+	(cond ((<= (the fixnum (alignment type)) #. (alignment t))
+	       (setf (aref res i) (aet-type type))))))
+    (cond ((< n (length *all-t-s-type*))
+	   (dotimes (i n)
+	     (cond ((not (eql (the fixnum (aref res i)) 0))
+		    (return-from make-t-type res))))
+	   *all-t-s-type*)
+	  (t res))))
+
+@s]
+
+
+****Change:(orig (356 356 a))
+@s[
+
+@s|
+(defvar *standard-slot-positions*
+  (let ((ar (make-array 50 :element-type 'unsigned-short
+		        :static t))) 
+    (dotimes (i 50)
+	     (declare (fixnum i))
+	     (setf (aref ar i)(* #. (size-of t) i)))
+    ar))
+
+(eval-when (compile )
+(proclaim '(function round-up (fixnum fixnum ) fixnum))
+)
+
+(defun round-up (a b)
+  (declare (fixnum a b))
+  (setq a (ceiling a b))
+  (the fixnum (* a b)))
+
+
+(defun get-slot-pos (leng include slot-descriptions &aux type small-types
+		          has-holes) 
+  (declare (special *standard-slot-positions*)) include
+  (dolist (v slot-descriptions)
+    (when (boot-slot-name v)
+      (setf type (best-array-element-type (boot-slot-type v))
+	    (boot-slot-type v) type)
+      (let ((val (boot-slot-default-init v)))
+	(unless (typep val type)
+	  (if (and (symbolp val)
+		   (constantp val))
+	      (setf val (symbol-value val)))
+	  (and (constantp val)
+	       (setf (boot-slot-default-init v) (coerce val type)))))
+      (cond ((memq type '(signed-char unsigned-char
+		          short unsigned-short
+		          long-float
+		          bit))
+	     (setq small-types t)))))
+  (cond ((and (null small-types)
+	      (< leng (length *standard-slot-positions*))
+	      (list  *standard-slot-positions* (* leng #. (size-of t)) nil)))
+	(t (let ((ar (make-array leng :element-type 'unsigned-short
+		                 :static t))
+		 (pos 0)(i 0)(align 0)type (next-pos 0))
+	     (declare (fixnum pos i align next-pos))
+	     ;; A default array.
+		   
+	     (dolist (v slot-descriptions)
+	       (setq type (boot-slot-type v))
+	       (setq align (alignment type))
+	       (unless (<= align #. (alignment t))
+		 (setq type t)
+		 (setf (boot-slot-type v) t)
+		 (setq align #. (alignment t))
+		 (setf (boot-slot-type-changed v) t))
+	       (setq next-pos (round-up pos align))      
+	       (or (eql pos next-pos) (setq has-holes t))
+	       (setq pos next-pos)
+	       (setf (aref ar i) pos)
+	       (incf pos (size-of type))
+	       (incf i))
+	     (list ar (round-up pos (size-of t)) has-holes)
+	     ))))
+
+
+(defun define-structure (name conc-name type named slot-descriptions copier
+		              static include print-function constructors
+		              offset predicate &optional documentation no-funs
+		              &aux leng)
+  (and (consp type) (eq (car type) 'vector)(setq type 'vector))
+  (setq leng (length slot-descriptions))
+  (setq slot-descriptions 
+	(mapcar #'(lambda (info)
+		    (make-slot-boot :name (first info)
+		                    :default-init (second info)
+		                    :type (third info)
+		                    :read-only (fourth info)
+		                    :offset (fifth info)
+		                    :accessor-name (sixth info)
+		                    :type-changed (seventh info)))
+		slot-descriptions))
+  (dolist (x slot-descriptions)
+    (when (boot-slot-name x)
+      (make-access-function name conc-name type named include no-funs x)))
+  (when (and copier (not no-funs))
+    (setf (symbol-function copier)
+	  (ecase type
+	    ((nil) #'si::copy-structure)
+	    (list #'copy-list)
+	    (vector #'copy-seq))))
+  (let ((include-str (and include (get include 's-data))))
+    (when (and (eq include 's-data-internal)
+	       (not (eq name 'basic-wrapper)))
+      (error "only ~s can include ~s" 'basic-wrapper 's-data-internal))
+    (when include-str
+      (cond ((and (not (consp include-str))
+		  (s-data-frozen include-str)
+		  (or (not (s-data-included include-str))
+		      (not (let ((te (get name 's-data)))
+		             (and te
+		                  (eq (s-data-includes te)
+		                      include-str))))))
+	     (warn " ~a was frozen but now included"
+		   include)))
+      (let ((old-included (boot-slot-value include-str 'included)))
+	(unless (member name old-included)
+	  (boot-set-slot-value include-str 'included (cons name old-included)))))
+    (let* ((tem (get name 's-data))
+	   (g-s-p (and (null type)
+		       (get-slot-pos leng include slot-descriptions)))
+	   (slot-position (car g-s-p))
+	   (size (if g-s-p (cadr g-s-p) 0))
+	   (has-holes (caddr g-s-p))
+	   (def (make-s-data-boot :name name
+		                  :length leng
+		                  :raw
+		                  (and (null type)
+		                       (make-t-type leng include 
+		                                    slot-descriptions))
+		                  :slot-position slot-position
+		                  :size size
+		                  :has-holes has-holes
+		                  :staticp static
+		                  :includes include-str
+		                  :print-function print-function
+		                  :slot-descriptions slot-descriptions
+		                  :constructors constructors
+		                  :offset offset
+		                  :type type
+		                  :named named
+		                  :documentation documentation
+		                  :conc-name conc-name)))
+      (check-s-data tem def name)
+      (when (and (consp def) (eq name 's-data))
+	(make-structures def))))
+  (when documentation
+    (setf (get name 'structure-documentation)
+	  documentation))
+  (when (and  (null type)  predicate)
+    (record-fn predicate 'defun '(t) t)
+    (or no-funs
+	(setf (symbol-function predicate)
+	      #'(lambda (x)
+		  (si::structure-subtype-p x name))))
+    (setf (get predicate 'compiler::co1)
+	  'compiler::co1structure-predicate)
+    (setf (get predicate 'struct-predicate) name))
+  nil)
+
+(defun check-s-data (old new name)
+  (unless (and old (member name '(slot s-data-internal basic-wrapper s-data)))
+    (when (and old (eq (structure-def old) (get 's-data 's-data)))
+      (boot-set-slot-value new 'included (boot-slot-value old 'included))
+      (boot-set-slot-value new 'frozen (boot-slot-value old 'frozen)))
+    (unless (and old
+		 (eq (structure-def old) (get 's-data 's-data))
+		 (let ((new-cnv (boot-slot-value new 'cache-number-vector))
+		       (old-cnv (boot-slot-value old 'cache-number-vector)))
+		   (boot-set-slot-value new 'cache-number-vector old-cnv)
+		   (prog1 (equalp new old)
+		     (boot-set-slot-value new 'cache-number-vector new-cnv))))
+      (when old
+	(warn "structure ~a is changing" name)
+	(when (eq (structure-def old) (get 's-data 's-data))
+	  (boot-set-slot-value old 'state (list ':obsolete new))))
+      (setf (get name 's-data) new))))
+
+
+@s]
+
+
+****Change:(orig (364 364 c))
+@s[        predicate predicate-specified
+        include
+
+@s|        predicate predicate-specified
+        include include-s-data
+
+@s]
+
+
+****Change:(orig (367 367 c))
+@s[        offset name-offset
+        documentation)
+
+@s|        offset name-offset
+        documentation
+	static)
+
+@s]
+
+
+****Change:(orig (370 370 c))
+@s[          ;; The defstruct options are supplied.
+
+@s|         ;; The defstruct options are supplied.
+
+@s]
+
+
+****Change:(orig (390 425 c))
+@s[      (cond ((and (consp (car os)) (not (endp (cdar os))))
+             (setq o (caar os) v (cadar os))
+             (case o
+               (:conc-name
+
+@s,               (t (error "~S is an illegal defstruct option." o))))))
+
+@s|       (cond ((and (consp (car os)) (not (endp (cdar os))))
+	       (setq o (caar os) v (cadar os))
+	       (case o
+		 (:conc-name
+		   (if (null v)
+		       (setq conc-name "")
+		     (setq conc-name v)))
+		 (:constructor
+		   (if (null v)
+		       (setq no-constructor t)
+		     (if (endp (cddar os))
+		         (setq constructors (cons v constructors))
+		       (setq constructors (cons (cdar os) constructors)))))
+		 (:copier (setq copier v))
+		 (:static (setq static v))
+		 (:predicate
+		   (setq predicate v)
+		   (setq predicate-specified t))
+		 (:include
+		   (setq include (cdar os))
+		   (unless (setq include-s-data (get v 's-data))
+		           (error "~S is an illegal included structure." v)))
+		 (:print-function
+		  (and (consp v) (eq (car v) 'function)
+		       (setq v (second v)))
+		  (setq print-function v))
+		 (:type (setq type v))
+		 (:initial-offset (setq initial-offset v))
+		 (t (error "~S is an illegal defstruct option." o))))
+	      (t
+		(if (consp (car os))
+		    (setq o (caar os))
+		  (setq o (car os)))
+		(case o
+		  (:constructor
+		    (setq constructors
+		          (cons default-constructor constructors)))
+		  ((:conc-name :copier :predicate :print-function))
+		  (:named (setq named t))
+		  (t (error "~S is an illegal defstruct option." o))))))
+
+@s]
+
+
+****Change:(orig (426 426 a))
+@s[
+
+@s|
+    (setq conc-name (intern (string conc-name)))
+
+    (and include-s-data (not print-function)
+	 (setq print-function (boot-s-data-print-function include-s-data)))
+
+
+@s]
+
+
+****Change:(orig (434 435 c))
+@s[    (when include
+          (unless (equal type (get (car include) 'structure-type))
+
+@s|    (when include-s-data
+          (unless (equal type (boot-s-data-type include-s-data))
+
+@s]
+
+
+****Change:(orig (442 443 c))
+@s[          (t
+           (setq offset (get (car include) 'structure-offset))))
+
+@s|          (t 
+	    (setq offset (boot-s-data-offset include-s-data))))
+
+@s]
+
+
+****Change:(orig (457 458 c))
+@s[      (setq sds (cons (parse-slot-description (car ds) offset) sds))
+      (setq offset (1+ offset)))
+
+@s|       (setq sds (cons (parse-slot-description (car ds) offset) sds))
+	(setq offset (1+ offset)))
+
+@s]
+
+
+****Change:(orig (464 464 c))
+@s[                (cons (list nil name) slot-descriptions)))
+
+@s|                (cons (make-slot :default-init name) slot-descriptions)))
+
+@s]
+
+
+****Change:(orig (469 469 c))
+@s[                (append (make-list initial-offset) slot-descriptions)))
+
+@s|                (append (mapcar #'make-named-slot (make-list initial-offset))
+		        slot-descriptions)))
+
+@s]
+
+
+****Change:(orig (473 486 c))
+@s[    (cond ((null include))
+          ((endp (cdr include))
+           (setq slot-descriptions
+                 (append (get (car include) 'structure-slot-descriptions)
+
+@s,                         slot-descriptions))))
+
+@s|    (let ((include-slot-descriptions 
+	   (and include
+		(boot-s-data-slot-descriptions include-s-data))))
+      (cond ((null include))
+	    ((endp (cdr include))
+	     (setq slot-descriptions
+		   (append include-slot-descriptions
+		           slot-descriptions)))
+	    (t
+	     (setq slot-descriptions
+		   (append (overwrite-slot-descriptions
+		            (mapcar #'(lambda (sd)
+		                        (parse-slot-description sd 0))
+		                    (cdr include))
+		            include-slot-descriptions)
+		           slot-descriptions)))))
+
+@s]
+
+
+****Change:(orig (489 492 c))
+@s[           ;; If a constructor option is NIL,
+           ;;  no constructor should have been specified.
+           (when constructors
+                 (error "Contradictory constructor options.")))
+
+@s|           ;; If a constructor option is NIL,
+	    ;;  no constructor should have been specified.
+	    (when constructors
+		  (error "Contradictory constructor options.")))
+
+@s]
+
+
+****Change:(orig (494 495 c))
+@s[           ;; If no constructor is specified,
+           ;;  the default-constructor is made.
+
+@s|          ;; If no constructor is specified,
+	   ;;  the default-constructor is made.
+
+@s]
+
+
+****Change:(orig (497 497 a))
+@s[           (setq constructors (list default-constructor))))
+
+
+@s|           (setq constructors (list default-constructor))))
+
+    ;; We need a default constructor for the sharp-s-reader
+    (or (member t (mapcar 'symbolp  constructors))
+	(push (intern (string-concatenate "__si::" default-constructor))
+		      constructors))
+
+
+@s]
+
+
+****Change:(orig (509 509 c))
+@s[          (error "An print function is supplied to a typed structure."))
+
+@s|          (error "A print function is supplied to a typed structure."))
+    
+    `(progn
+       (define-structure ',name  ',conc-name ',type ',named
+		         ',(mapcar #'(lambda (slotd)
+		                       (list (boot-slot-name slotd)
+		                             (boot-slot-default-init slotd)
+		                             (boot-slot-type slotd)
+		                             (boot-slot-read-only slotd)
+		                             (boot-slot-offset slotd)
+		                             (boot-slot-accessor-name slotd)
+		                             (boot-slot-type-changed slotd)))
+		                   slot-descriptions)
+		         ',copier ',static ',include ',print-function ',constructors 
+		         ',offset ',predicate ',documentation)
+
+@s]
+
+
+****Change:(orig (511 542 c))
+@s[    `(progn (si:putprop ',name
+                        '(defstruct ,name ,@slots)
+                        'defstruct-form)
+            (si:putprop ',name t 'is-a-structure)
+
+@s,            (si:putprop ',name ,documentation 'structure-documentation)
+            ',name)))
+
+@s|       ,@(mapcar #'(lambda (constructor)
+		     (make-constructor name constructor type named
+		                       slot-descriptions))
+		 constructors)
+       ,@(if (and type predicate)
+	     (list (make-predicate name predicate type named
+		                   name-offset)))
+       ',name
+       )))
+
+@s]
+
+
+****Change:(orig (544 544 a))
+@s[
+
+
+@s|
+
+(eval-when (compile load eval)
+
+(defconstant wrapper-cache-number-adds-ok 4)
+
+(defconstant wrapper-cache-number-length
+	     (- (integer-length most-positive-fixnum)
+		wrapper-cache-number-adds-ok))
+
+(defconstant wrapper-cache-number-mask
+	     (1- (expt 2 wrapper-cache-number-length)))
+
+
+(defvar *get-wrapper-cache-number* (make-random-state))
+
+(defun get-wrapper-cache-number ()
+  (let ((n 0))
+    (declare (fixnum n))
+    (loop
+      (setq n
+	    (logand wrapper-cache-number-mask
+		    (random most-positive-fixnum *get-wrapper-cache-number*)))
+      (unless (zerop n) (return n)))))
+
+)
+
+(eval-when (compile load eval)
+
+(defconstant wrapper-cache-number-vector-length 8)
+
+(deftype cache-number-vector ()
+  `(simple-array fixnum (8)))
+
+(defconstant wrapper-layout (make-list wrapper-cache-number-vector-length
+		                       :initial-element 'number))
+
+)
+
+(defun make-wrapper-cache-number-vector ()
+  (let ((cnv (make-array #.wrapper-cache-number-vector-length
+		         :element-type 'fixnum)))
+    (dotimes (i #.wrapper-cache-number-vector-length)
+      (setf (aref cnv i) (get-wrapper-cache-number)))
+    cnv))
+
+(defstruct (slot
+	     (:static t)
+	     (:constructor make-slot)
+	     (:constructor make-named-slot (name)))
+  name
+  default-init
+  (type t)
+  read-only
+  offset
+  accessor-name
+  type-changed)
+
+;; All of the fields of s-data-internal must coincide with 
+;; the C structure s_data (see object.h).
+(defstruct (s-data-internal
+	     (:conc-name s-data-)
+	     (:constructor nil)
+	     (:static t))
+  ;; all of these slots are used by c code
+  name                    ; a symbol
+  (length 0 :type fixnum) ; length of slot-descriptions
+  raw                     ; a static array of unsigned-short (enum aelttype)
+  included                ; a list of the names of structures including this one
+  includes                ; nil or a s-data structure
+  staticp         ; t or nil
+  print-function  ; nil, a symbol, or a lambda expression
+  slot-descriptions       ; a list of slots
+  slot-position           ; a static array of unsigned-short
+  (size 0 :type fixnum) ; total size to allocate
+  has-holes)              ; t or nil
+
+(defstruct (basic-wrapper (:include s-data-internal)
+		          (:conc-name wrapper-)
+		          (:constructor nil)
+		          (:static t))
+  (cache-number-vector (make-wrapper-cache-number-vector))
+  (state t) ;  either t or a list (state-sym new-wrapper)
+  ;;           where state-sym is either :flush or :obsolete
+  (class nil))
+
+;(get name 'si::s-data) ;returns one of these:
+(defstruct (s-data (:include basic-wrapper)
+		   (:static t))
+  ;; these slots are used only from lisp
+  frozen          ; t or nil ; t means won't include this
+  documentation 
+  constructors            ; a list of either a symbol or a list symbol, arglist
+  offset          ; the total number of slots and placeholders
+  named                   ; t or nil
+  type                    ; one of: nil, list, or vector
+  conc-name)              ; an interned symbol
+
+#|| 
+(import '(si::wrapper-state si::wrapper-class si::basic-wrapper))
+
+(defstruct (wrapper (:include basic-wrapper)
+		    (:print-function print-wrapper)
+		    (:constructor make-wrapper-internal)
+		    (:predicate wrapper-p)
+		    (:conc-name wrapper-))
+  (class-slots nil :type list))
+
+(defun print-wrapper (instance stream depth)
+  (printing-random-thing (wrapper stream)
+    (format stream "Wrapper ~S" (wrapper-class wrapper))))
+||#
+
+(defun update-wrapper-state (old new same-p)
+  (unless (consp old)
+    (setf (wrapper-state old) 
+	  (list (if same-p ':flush ':obsolete) new))))
+
+(defun freeze-defstruct (name)
+  (let ((tem (and (symbolp name) (get name 's-data))))
+    (if tem (setf (s-data-frozen tem) t))))
+
+
+
+@s]
+
+
+****Change:(orig (551 553 c))
+@s[  (let ((l (read stream)))
+    (unless (get (car l) 'is-a-structure)
+            (error "~S is not a structure." (car l)))
+
+@s|  (let* ((l (prog1 (read stream t nil t)
+	      (if *read-suppress*
+		  (return-from sharp-s-reader nil))))
+	 (sd
+	   (or (get (car l) 's-data)
+	       
+	       (error "~S is not a structure." (car l)))))
+    
+
+@s]
+
+
+****Change:(orig (558 558 c))
+@s[         (do ((cs (get (car l) 'structure-constructors) (cdr cs)))
+
+@s|         (do ((cs (s-data-constructors sd) (cdr cs)))
+
+@s]
+
+
+****Change:(orig (571 571 d))
+@s[(set-dispatch-macro-character #\# #\S 'sharp-s-reader)
+
+
+
+@s|(set-dispatch-macro-character #\# #\S 'sharp-s-reader)
+
+
+@s]
+
+
+****Change:(orig (582 582 c))
+@s[(defstruct person name age sex)
+
+@s|(defstruct person name (age 20 :type signed-char) (eyes 2 :type signed-char)
+		                                        sex)
+(defstruct person name (age 20 :type signed-char) (eyes 2 :type signed-char)
+		                                        sex)
+(defstruct person1 name (age 20 :type fixnum)
+		                                        sex)
+
+@s]
+
+
+****Change:(orig (584 584 c))
+@s[(defstruct (astronaut (:include person (age 45))
+
+@s|(defstruct joe a (a1 0 :type (mod  30)) (a2 0 :type (mod  30))
+  (a3 0 :type (mod  30)) (a4 0 :type (mod 30)) )
+
+;(defstruct person name age sex)
+
+(defstruct (astronaut (:include person (age 45 :type fixnum))
+
+@s]
+
+
+****Change:(orig (605 605 a))
+@s[  associative
+  identity)
+
+@s|  associative
+  identity)
+
+
+@s]
+
+==============================================================================

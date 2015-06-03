@@ -1,0 +1,32 @@
+# makefile for making pcl -- W. Schelter.
+
+#  Directions:
+# make -f makefile.akcl compile
+# make -f makefile.akcl saved_pcl
+
+SHELL=/bin/sh
+
+LISP=akcl
+
+
+SETUP='(load "pkg.lisp")(load "defsys.lisp")' \
+	'(setq pcl::*default-pathname-extensions* (cons "lisp" "o"))' \
+	'(setq pcl::*pathname-extensions* (cons "lisp" "o"))' \
+	'(load "sys-proclaim.lisp")(compiler::emit-fn t)'
+
+compile:
+	echo ${SETUP} '(pcl::compile-pcl)' | ${LISP}
+
+saved_pcl:
+	echo ${SETUP} '(pcl::load-pcl)(si::save-system "saved_pcl")' | ${LISP}
+
+
+# remake the sys-package.lisp and sys-proclaim.lisp files
+# Those files may be empty on a first build.
+remake-sys-files:
+	echo ${SETUP} '(pcl::load-pcl)(in-package "PCL")(renew-sys-files)' | ${LISP}
+	cp sys-proclaim.lisp xxx
+	cat xxx | sed -e "s/COMPILER::CMP-ANON//g" > sys-proclaim.lisp
+
+clean:
+	rm -f *.o

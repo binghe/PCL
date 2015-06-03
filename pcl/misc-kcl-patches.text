@@ -1,0 +1,340 @@
+c/cmpaux.c
+*** c/cmpaux.c    Mon Jul  6 00:14:55 1992
+--- ../akcl-1-615/c/cmpaux.c      Thu Jun 18 20:01:07 1992
+***************
+*** 229,239 ****
+      if (leng > 0 && leng < x->st.st_dim && x->st.st_self[leng]==0)
+      return x->st.st_self;
+    if (x->st.st_dim == leng
+        && ( leng % sizeof(object))
+       )
+!     { x->st.st_self[leng] = 0;
+        return x->st.st_self;
+      }
+    else
+      {char *res=malloc(leng+1);
+       bcopy(x->st.st_self,res,leng);
+--- 229,240 ----
+      if (leng > 0 && leng < x->st.st_dim && x->st.st_self[leng]==0)
+      return x->st.st_self;
+    if (x->st.st_dim == leng
+        && ( leng % sizeof(object))
+       )
+!     { if(x->st.st_self[leng] != 0)
+!          x->st.st_self[leng] = 0;
+        return x->st.st_self;
+      }
+    else
+      {char *res=malloc(leng+1);
+       bcopy(x->st.st_self,res,leng);
+c/main.c
+*** c/main.c      Mon Jul  6 00:14:59 1992
+--- ../akcl-1-615/c/main.c        Fri Jul  3 02:19:37 1992
+***************
+*** 611,621 ****
+            {catch_fatal = -1;
+             if (sgc_enabled)
+               { sgc_quit();}
+             if (sgc_enabled==0)
+               { install_segmentation_catcher() ;}
+!            FEerror("Caught fatal error [memory may be damaged]"); }
+          printf("\nUnrecoverable error: %s.\n", s);
+          fflush(stdout);
+  #ifdef UNIX
+          abort();
+  #endif
+--- 611,621 ----
+            {catch_fatal = -1;
+             if (sgc_enabled)
+               { sgc_quit();}
+             if (sgc_enabled==0)
+               { install_segmentation_catcher() ;}
+!            FEerror("Caught fatal error [memory may be damaged] ~A",1,make_simple_string(s)); }
+          printf("\nUnrecoverable error: %s.\n", s);
+          fflush(stdout);
+  #ifdef UNIX
+          abort();
+  #endif
+***************
+*** 853,872 ****
+  
+  siLsave_system()
+  {
+          int i;
+  
+- #ifdef HAVE_YP_UNBIND
+-         extern object truename(),namestring();
+          check_arg(1);
+!         /* prevent subsequent consultation of yp by getting
+!            truename now*/
+!         vs_base[0]=namestring(truename(vs_base[0]));
+!         {char name[200];
+!          char *dom = name;
+!          if (0== getdomainname(dom,sizeof(name)))
+!            yp_unbind(dom);}
+  #endif
+          
+          saving_system = TRUE;
+          GBC(t_contiguous);
+  
+--- 853,867 ----
+  
+  siLsave_system()
+  {
+          int i;
+  
+          check_arg(1);
+! #ifdef HAVE_YP_UNBIND
+!         /* see unixsave.c */
+!         {char *dname;
+!          yp_get_default_domain(&dname);}
+  #endif
+          
+          saving_system = TRUE;
+          GBC(t_contiguous);
+  
+c/num_log.c
+*** c/num_log.c   Mon Jul  6 00:15:00 1992
+--- ../akcl-1-615/c/num_log.c     Mon Jun 15 21:15:59 1992
+***************
+*** 266,286 ****
+          return(~j);
+  }
+  
+  int
+  big_bitp(x, p)
+! object  x;
+! int     p;
+  { GEN u = MP(x);
+    int ans ;
+    int i = p /32;
+    if (signe(u) < 0)
+      {  save_avma;
+         u = complementi(u);
+         restore_avma;
+     }
+!   if (i < lgef(u))
+      { ans = ((MP_ITH_WORD(u,i,lgef(u))) & (1 << p%32));}
+    else if (big_sign(x) < 0) ans = 1;
+    else ans = 0;
+    return ans;
+  }
+--- 266,286 ----
+          return(~j);
+  }
+  
+  int
+  big_bitp(x, p)
+! object  x;
+! int     p;
+  { GEN u = MP(x);
+    int ans ;
+    int i = p /32;
+    if (signe(u) < 0)
+      {  save_avma;
+         u = complementi(u);
+         restore_avma;
+     }
+!   if (i < lgef(u) -MP_CODE_WORDS)
+      { ans = ((MP_ITH_WORD(u,i,lgef(u))) & (1 << p%32));}
+    else if (big_sign(x) < 0) ans = 1;
+    else ans = 0;
+    return ans;
+  }
+c/unixsave.c
+*** c/unixsave.c  Mon Jul  6 00:15:07 1992
+--- ../akcl-1-615/c/unixsave.c    Fri Jul  3 02:52:36 1992
+***************
+*** 71,81 ****
+--- 71,160 ----
+                          break;
+                  } else
+                          break;
+  }
+  
++ #include "page.h"
+  
++ /* string is aligned on a word boundary */
++ int
++ find_string_in_memory(string,length,other_p,function)
++      char *string;
++      int length,other_p;
++      int *function();
++ {
++   int *imem_first,*imem_last,*imem,word;
++   char *mem;
++   int len,page_first,page_last,i;
++   int maxpage = page(heap_end);
++   if(((int)string & 3) == 0 && length >= 4) /* just to be safe */
++     {word=*(int *)string;
++      for (page_first = 0;  page_first < maxpage;  page_first++)
++        if ((enum type)type_map[page_first] != t_other)
++          break;
++      for (;  page_first < maxpage;  page_first++)
++        if (((enum type)type_map[page_first] == t_other)?other_p:!other_p)
++          {for (page_last = page_first+1;  page_last < maxpage;  page_last++)
++             if ( !(((enum type)type_map[page_last] == t_other)?other_p:!other_p) )
++               break;
++           imem_first=(int *)pagetochar(page_first);
++           imem_last=(int *)( ( ((int)pagetochar(page_last)) - length) &~3 );
++           for (imem = imem_first; imem <= imem_last; imem++)
++             if (*imem == word)
++               {mem=(char *)imem;
++                for(i=4; i<length && mem[i]==string[i]; i++);
++                if(i>=length)
++                  if((*function)(mem))
++                    return TRUE;}}}
++   return FALSE;
++ }
++ 
++ int 
++ fsim_first(address)
++      char *address;
++ {
++   return TRUE;
++ }
++ 
++ int 
++ fsim_reset_pointer(address)
++      char **address;
++ {
++   *address = NULL;
++   return FALSE;
++ }
++ 
++ #define t_other_PAGES TRUE
++ #define NOT_t_other_PAGES FALSE
++ 
++ int
++ reset_other_pointers(address)
++      char *address;
++ {
++   int word=(int)address;
++   find_string_in_memory(&word,4,t_other_PAGES,fsim_reset_pointer);
++ }
++ 
++ int
++ maybe_reset_pointers(address)
++      char *address;
++ {
++   int word=(int)address;
++   if(!find_string_in_memory(&word,4,NOT_t_other_PAGES,fsim_first))
++     reset_other_pointers(address);
++   return FALSE;
++ }
++ 
++ reset_other_pointers_to_string(string)
++      char *string;
++ {
++   int length=strlen(string)+1;
++   find_string_in_memory(string,length,t_other_PAGES,maybe_reset_pointers);
++ }
++ 
++ bool saving_system;
++ 
+  memory_save(original_file, save_file)
+  char *original_file, *save_file;
+  {       MEM_SAVE_LOCALS;
+          char *data_begin, *data_end;
+          int original_data;
+***************
+*** 100,110 ****
+--- 179,206 ----
+          n = open(save_file, O_CREAT|O_WRONLY, 0777);
+          if (n != 1 || (save = fdopen(n, "w")) != stdout) {
+                  fprintf(stderr, "Can't open the save file.\n");
+                  exit(1);
+          }
++ 
+          setbuf(save, stdout_buf);
++ 
++ #ifdef HAVE_YP_UNBIND
++ /* yp_get_default_domain() caches the result of getdomainname() in
++    a malloc'ed block of memory; and gethostbyname saves the result of
++    yp_get_default_domain() in yet another chunk of memory.  These
++    cached values will cause problems if the saved image is run on a
++    machine having a different local domainname.  [When getdomainname 
++    is called (by CLX, for example) KCL will wait forever.]  There doesn't
++    seem to be any way to uncache these things (apparently yp_unbind does 
++    not do this), nor any good way to find these blocks of memory.         */
++    
++         if(saving_system)
++           {char *dname;
++            yp_get_default_domain(&dname);
++            reset_other_pointers(dname);}
++ #endif
+  
+          READ_HEADER;
+          FILECPY_HEADER;
+  
+          for (n = header.a_data, p = data_begin;  ;  n -= BUFSIZ, p += BUFSIZ)
+cmpnew/cmpcall.lsp
+*** cmpnew/cmpcall.lsp    Mon Jul  6 00:15:13 1992
+--- ../akcl-1-615/cmpnew/cmpcall.lsp      Thu Jun 18 21:43:24 1992
+***************
+*** 118,127 ****
+--- 118,128 ----
+                          ;;; responsible for maintaining this condition.
+        (let ((*vs* *vs*) (form (caddr funob)))
+             (declare (object form))
+             (cond ((and (listp args)
+                         *use-sfuncall*
++                        (<= (length (cdr args)) 10)
+                         ;;Determine if only one value at most is required:
+                         (or
+                          (eq *value-to-go* 'trash)
+                          (and (consp *value-to-go*)
+                               (eq (car *value-to-go*) 'var))
+lsp/autoload.lsp
+*** lsp/autoload.lsp      Mon Jul  6 00:15:27 1992
+--- ../akcl-1-615/lsp/autoload.lsp        Tue Jun 16 02:36:45 1992
+***************
+*** 430,440 ****
+          '(cons
+            fixnum bignum ratio short-float long-float complex
+            character symbol package hash-table
+            array vector string bit-vector
+            structure stream random-state readtable pathname
+!           cfun cclosure sfun gfun cfdata spice fat-string ))
+  
+  (defun room (&optional x)
+    (let ((l (multiple-value-list (si:room-report)))
+          maxpage leftpage ncbpage maxcbpage ncb cbgbccount npage
+          rbused rbfree nrbpage
+--- 430,440 ----
+          '(cons
+            fixnum bignum ratio short-float long-float complex
+            character symbol package hash-table
+            array vector string bit-vector
+            structure stream random-state readtable pathname
+!           cfun cclosure sfun gfun vfun cfdata spice fat-string dclosure))
+  
+  (defun room (&optional x)
+    (let ((l (multiple-value-list (si:room-report)))
+          maxpage leftpage ncbpage maxcbpage ncb cbgbccount npage
+          rbused rbfree nrbpage
+lsp/cmpinit.lsp
+*** lsp/cmpinit.lsp       Mon Jul  6 00:15:28 1992
+--- ../akcl-1-615/lsp/cmpinit.lsp Mon Jun 22 17:11:11 1992
+***************
+*** 4,12 ****
+  (setq compiler::*eval-when-defaults* '(compile eval load))
+  (or (fboundp 'si::get-&environment) (load "defmacro.lsp"))
+  ;(or (get 'si::s-data 'si::s-data)
+  ;    (progn (load "../lsp/setf.lsp") (load "../lsp/defstruct.lsp")))
+  (if (probe-file "sys-proclaim.lisp")(load "sys-proclaim.lisp"))
+! 
+! 
+  
+  ;;;;;
+--- 4,13 ----
+  (setq compiler::*eval-when-defaults* '(compile eval load))
+  (or (fboundp 'si::get-&environment) (load "defmacro.lsp"))
+  ;(or (get 'si::s-data 'si::s-data)
+  ;    (progn (load "../lsp/setf.lsp") (load "../lsp/defstruct.lsp")))
+  (if (probe-file "sys-proclaim.lisp")(load "sys-proclaim.lisp"))
+! (unless (get 'si::basic-wrapper 'si::s-data)
+!   (setf (get 'si::s-data 'si::s-data) nil)
+!   (load "../lsp/defstruct.lsp"))
+  
+  ;;;;;
