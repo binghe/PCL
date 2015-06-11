@@ -35,6 +35,7 @@
 
 ;;; N.B. Load this source file directly, rather than trying to compile it.
 
+(in-package #:closette)
 
 ;;;
 ;;; Standard instances
@@ -1512,7 +1513,7 @@
                  (slot-value object sn))))
   (values))
 (defmethod describe-object ((object t) stream)
-  (lisp:describe object)
+  (common-lisp:describe object)
   (values))
 
 (format t "~%Closette is a Knights of the Lambda Calculus production.")
