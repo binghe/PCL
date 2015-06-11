@@ -35,122 +35,7 @@
 
 ;;; N.B. Load this source file directly, rather than trying to compile it.
 
-(in-package 'closette :use '(lisp))
-
-;;; When running in a Common Lisp that doesn't yet support function names like
-;;; (setf foo), you should first load the file newcl.lisp.  This next little
-;;; bit imports stuff from there as needed.
-
-#-Genera
-(import '(newcl:print-unreadable-object))
-
-#-Genera
-(shadowing-import '(newcl:defun newcl:fboundp newcl:fmakunbound
-                    newcl:fdefinition))
-
-#-Genera
-(export '(newcl:defun newcl:fboundp newcl:fmakunbound newcl:fdefinition))
-
-#+Genera
-(shadowing-import '(future-common-lisp:setf
-                    future-common-lisp:fboundp
-                    future-common-lisp:fmakunbound
-                    future-common-lisp:fdefinition
-                    future-common-lisp:print-unreadable-object))
-
-#+Genera
-(export '(future-common-lisp:setf
-          future-common-lisp:fboundp
-          future-common-lisp:fmakunbound
-          future-common-lisp:fdefinition
-          future-common-lisp:print-unreadable-object))
-
-
-(defvar exports
-        '(defclass defgeneric defmethod
-          find-class class-of
-          call-next-method next-method-p
-          slot-value slot-boundp slot-exists-p slot-makunbound
-          make-instance change-class
-          initialize-instance reinitialize-instance shared-initialize
-          update-instance-for-different-class
-          print-object
-
-          standard-object
-          standard-class standard-generic-function standard-method
-          class-name
-
-          class-direct-superclasses class-direct-slots
-          class-precedence-list class-slots class-direct-subclasses
-          class-direct-methods
-          generic-function-name generic-function-lambda-list 
-          generic-function-methods generic-function-discriminating-function
-          generic-function-method-class
-          method-lambda-list method-qualifiers method-specializers method-body
-          method-environment method-generic-function method-function
-          slot-definition-name slot-definition-initfunction 
-          slot-definition-initform slot-definition-initargs
-          slot-definition-readers slot-definition-writers
-          slot-definition-allocation
-          ;;
-          ;; Class-related metaobject protocol
-          ;; 
-          compute-class-precedence-list compute-slots
-          compute-effective-slot-definition
-          finalize-inheritance allocate-instance
-          slot-value-using-class slot-boundp-using-class 
-          slot-exists-p-using-class slot-makunbound-using-class
-          ;;
-          ;; Generic function related metaobject protocol
-          ;;
-          compute-discriminating-function
-          compute-applicable-methods-using-classes method-more-specific-p
-          compute-effective-method-function compute-method-function
-          apply-methods apply-method
-          find-generic-function  ; Necessary artifact of this implementation
-          ))
-
-
-(export exports)
-
-;;;
-;;; Utilities 
-;;;
-
-;;; push-on-end is like push except it uses the other end:
-
-(defmacro push-on-end (value location)
-  `(setf ,location (nconc ,location (list ,value))))
-
-;;; (setf getf*) is like (setf getf) except that it always changes the list,
-;;;              which must be non-nil.
-
-(defun (setf getf*) (new-value plist key)
-  (block body
-    (do ((x plist (cddr x)))
-      ((null x))
-      (when (eq (car x) key)
-        (setf (car (cdr x)) new-value)
-        (return-from body new-value)))
-    (push-on-end key plist)
-    (push-on-end new-value plist)
-    new-value))
-
-;;; mapappend is like mapcar except that the results are appended together:
- 
-(defun mapappend (fun &rest args)
-  (if (some #'null args)
-      ()
-      (append (apply fun (mapcar #'car args))
-              (apply #'mapappend fun (mapcar #'cdr args)))))
-
-;;; mapplist is mapcar for property lists:
-
-(defun mapplist (fun x)
-  (if (null x)
-      ()
-      (cons (funcall fun (car x) (cadr x))
-            (mapplist fun (cddr x)))))
+(in-package #:closette)
 
 ;;;
 ;;; Standard instances
@@ -159,9 +44,7 @@
 ;;; This implementation uses structures for instances, because they're the only
 ;;; kind of Lisp object that can be easily made to print whatever way we want.
 
-
 (defstruct (std-instance (:constructor allocate-std-instance (class slots))
-                   #+kcl (:constructor make-std-instance-for-sharp-s)
                          (:predicate std-instance-p)
                          (:print-function print-std-instance))
   class
@@ -372,14 +255,23 @@
 (defmacro defclass (name direct-superclasses direct-slots
                     &rest options)
   `(ensure-class ',name
-     :direct-superclasses
-       ,(canonicalize-direct-superclasses direct-superclasses)
-     :direct-slots
-       ,(canonicalize-direct-slots direct-slots)
-     ,@(canonicalize-defclass-options options)))
+                 :direct-superclasses
+                 ,(canonicalize-direct-superclasses direct-superclasses)
+                 :direct-slots
+                 ,(canonicalize-direct-slots direct-slots)
+                 ,@(canonicalize-defclass-options options)))
+
+(defun canonicalize-direct-superclasses (direct-superclasses)
+  `(list ,@(mapcar #'canonicalize-direct-superclass direct-superclasses)))
+
+(defun canonicalize-direct-superclass (class-name)
+  `(find-class ',class-name))
+
+(defun canonicalize-defclass-options (options)
+  (mapappend #'canonicalize-defclass-option options))
 
 (defun canonicalize-direct-slots (direct-slots)
-   `(list ,@(mapcar #'canonicalize-direct-slot direct-slots)))
+  `(list ,@(mapcar #'canonicalize-direct-slot direct-slots)))
 
 (defun canonicalize-direct-slot (spec)
   (if (symbolp spec)
@@ -411,38 +303,29 @@
              (push-on-end `',(car olist) other-options)
              (push-on-end `',(cadr olist) other-options))))
         `(list
-           :name ',name
-           ,@(when initfunction
-               `(:initform ,initform
-                 :initfunction ,initfunction))
-           ,@(when initargs `(:initargs ',initargs))
-           ,@(when readers `(:readers ',readers))
-           ,@(when writers `(:writers ',writers))
-           ,@other-options))))
-
-(defun canonicalize-direct-superclasses (direct-superclasses)
-  `(list ,@(mapcar #'canonicalize-direct-superclass direct-superclasses)))
-
-(defun canonicalize-direct-superclass (class-name)
-  `(find-class ',class-name))
-
-(defun canonicalize-defclass-options (options)
-  (mapappend #'canonicalize-defclass-option options))
+          :name ',name
+          ,@(when initfunction
+              `(:initform ,initform
+                :initfunction ,initfunction))
+          ,@(when initargs `(:initargs ',initargs))
+          ,@(when readers `(:readers ',readers))
+          ,@(when writers `(:writers ',writers))
+          ,@other-options))))
 
 (defun canonicalize-defclass-option (option)
   (case (car option)
     (:metaclass
-      (list ':metaclass
-       `(find-class ',(cadr option))))
+     (list ':metaclass
+           `(find-class ',(cadr option))))
     (:default-initargs
-      (list 
-       ':direct-default-initargs
-       `(list ,@(mapappend
-                  #'(lambda (x) x)
-                  (mapplist
-                    #'(lambda (key value)
-                        `(',key ,value))
-                    (cdr option))))))
+     (list 
+      ':direct-default-initargs
+      `(list ,@(mapappend
+                #'(lambda (x) x)
+                (mapplist
+                 #'(lambda (key value)
+                     `(',key ,value))
+                 (cdr option))))))
     (t (list `',(car option) `',(cadr option)))))
 
 ;;; find-class
@@ -1628,7 +1511,7 @@
                  (slot-value object sn))))
   (values))
 (defmethod describe-object ((object t) stream)
-  (lisp:describe object)
+  (common-lisp:describe object)
   (values))
 
 (format t "~%Closette is a Knights of the Lambda Calculus production.")
