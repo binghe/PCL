@@ -44,9 +44,7 @@
 ;;; This implementation uses structures for instances, because they're the only
 ;;; kind of Lisp object that can be easily made to print whatever way we want.
 
-
 (defstruct (std-instance (:constructor allocate-std-instance (class slots))
-                   #+kcl (:constructor make-std-instance-for-sharp-s)
                          (:predicate std-instance-p)
                          (:print-function print-std-instance))
   class
@@ -257,14 +255,23 @@
 (defmacro defclass (name direct-superclasses direct-slots
                     &rest options)
   `(ensure-class ',name
-     :direct-superclasses
-       ,(canonicalize-direct-superclasses direct-superclasses)
-     :direct-slots
-       ,(canonicalize-direct-slots direct-slots)
-     ,@(canonicalize-defclass-options options)))
+                 :direct-superclasses
+                 ,(canonicalize-direct-superclasses direct-superclasses)
+                 :direct-slots
+                 ,(canonicalize-direct-slots direct-slots)
+                 ,@(canonicalize-defclass-options options)))
+
+(defun canonicalize-direct-superclasses (direct-superclasses)
+  `(list ,@(mapcar #'canonicalize-direct-superclass direct-superclasses)))
+
+(defun canonicalize-direct-superclass (class-name)
+  `(find-class ',class-name))
+
+(defun canonicalize-defclass-options (options)
+  (mapappend #'canonicalize-defclass-option options))
 
 (defun canonicalize-direct-slots (direct-slots)
-   `(list ,@(mapcar #'canonicalize-direct-slot direct-slots)))
+  `(list ,@(mapcar #'canonicalize-direct-slot direct-slots)))
 
 (defun canonicalize-direct-slot (spec)
   (if (symbolp spec)
@@ -296,38 +303,29 @@
              (push-on-end `',(car olist) other-options)
              (push-on-end `',(cadr olist) other-options))))
         `(list
-           :name ',name
-           ,@(when initfunction
-               `(:initform ,initform
-                 :initfunction ,initfunction))
-           ,@(when initargs `(:initargs ',initargs))
-           ,@(when readers `(:readers ',readers))
-           ,@(when writers `(:writers ',writers))
-           ,@other-options))))
-
-(defun canonicalize-direct-superclasses (direct-superclasses)
-  `(list ,@(mapcar #'canonicalize-direct-superclass direct-superclasses)))
-
-(defun canonicalize-direct-superclass (class-name)
-  `(find-class ',class-name))
-
-(defun canonicalize-defclass-options (options)
-  (mapappend #'canonicalize-defclass-option options))
+          :name ',name
+          ,@(when initfunction
+              `(:initform ,initform
+                :initfunction ,initfunction))
+          ,@(when initargs `(:initargs ',initargs))
+          ,@(when readers `(:readers ',readers))
+          ,@(when writers `(:writers ',writers))
+          ,@other-options))))
 
 (defun canonicalize-defclass-option (option)
   (case (car option)
     (:metaclass
-      (list ':metaclass
-       `(find-class ',(cadr option))))
+     (list ':metaclass
+           `(find-class ',(cadr option))))
     (:default-initargs
-      (list 
-       ':direct-default-initargs
-       `(list ,@(mapappend
-                  #'(lambda (x) x)
-                  (mapplist
-                    #'(lambda (key value)
-                        `(',key ,value))
-                    (cdr option))))))
+     (list 
+      ':direct-default-initargs
+      `(list ,@(mapappend
+                #'(lambda (x) x)
+                (mapplist
+                 #'(lambda (key value)
+                     `(',key ,value))
+                 (cdr option))))))
     (t (list `',(car option) `',(cadr option)))))
 
 ;;; find-class

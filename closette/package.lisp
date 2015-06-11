@@ -7,6 +7,7 @@
     #:initialize-instance #:reinitialize-instance #:shared-initialize
     #:update-instance-for-different-class
     #:print-object
+    #:describe-object
     #:standard-object
     #:standard-class #:standard-generic-function #:standard-method
     #:class-name
