@@ -1,3 +1,6 @@
+(in-package :pclos-system)
+
+(eval-when (:compile-toplevel)
 (defparameter +closette-symbols+
   '(#:defclass #:defgeneric #:defmethod
     #:find-class #:class-of
@@ -44,7 +47,7 @@
     #:compute-effective-method-function #:compute-method-function
     #:apply-methods #:apply-method
     #:find-generic-function  ; Necessary artifact of this implementation
-))
+    )))
 
 (defpackage #:closette
   (:use #:common-lisp)

@@ -1,6 +1,6 @@
 ;;;-*-Mode:LISP; Package: CLOSETTE; Base:10; Syntax:Common-lisp -*-
 
-(in-package 'closette :use '(lisp))
+(in-package :closette)
 
 ;;; CLOSette tests
 
@@ -583,7 +583,8 @@ PRINT-OBJECT \ldots)|#
                             (class-direct-slots (cadr specializers)))
                  :test #'equal))))
 
-(defun relevant-generic-functions (class ceiling &key elide-accessors-p)
+;; renamed for duplicated definitions
+(defun relevant-generic-functions-2 (class ceiling &key elide-accessors-p)
   (remove-duplicates
     (mapcar #'method-generic-function
       (remove-if #'(lambda (m)
@@ -593,9 +594,10 @@ PRINT-OBJECT \ldots)|#
         (mapappend #'class-direct-methods
           (set-difference (class-precedence-list class)
                           (class-precedence-list ceiling)))))))
-(relevant-generic-functions (find-class 'color-rectangle)
-                            (find-class 'standard-object)
-                            :elide-accessors-p 't)
+
+(relevant-generic-functions-2 (find-class 'color-rectangle)
+                              (find-class 'standard-object)
+                              :elide-accessors-p 't)
 #|(#<Standard-Generic-Function paint 15316224>)|#
 
 
@@ -976,10 +978,6 @@ Error: The slot COUNTER is missing from the class
   (apply #'call-next-method
          class
          (append initargs (class-default-initargs class))))
-
-(defun compute-class-default-initargs (class)
-  (mapappend #'class-direct-default-initargs
-             (class-precedence-list class)))
 
 (defmethod class-default-initargs ((class standard-class))
   ())
