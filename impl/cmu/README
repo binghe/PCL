@@ -1,0 +1,17 @@
+To install,
+
+put this version of PCL in cmucl's source directory, and name it pcl.
+rename the cmucl file  tools/pclcom.lisp  to  tools/pclcom.lisp.original
+link the file  impl/cmu/pclcom.lisp  to  cmucl/tools/pclcom.lisp
+link the file  impl/cmu/pclload.lisp  to  pclload.lisp
+
+For example, 
+
+cd cmucl17f
+mv pcl pcl.original
+<<install this PCL in the pcl directory>>
+cd tools
+mv pclcom.lisp pclcom.lisp.original
+ln -s ../pcl/impl/cmu/pclcom.lisp pclcom.lisp
+cd ../pcl
+ln -s impl/cmu/pclload.lisp pclload.lisp

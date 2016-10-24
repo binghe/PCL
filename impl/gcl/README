@@ -1,0 +1,14 @@
+Includes changes for gcl version 2.0 by W. Schelter
+
+
+To compile
+
+ln -s impl/gcl/makefile.gcl makefile.gcl
+ln -s impl/gcl/sys-package.lisp sys-package.lisp
+ln -s impl/gcl/sys-proclaim.lisp sys-proclaim.lisp
+make -f makefile.gcl compile
+
+Then to make saved version
+
+make -f makefile.gcl saved_pcl
+
